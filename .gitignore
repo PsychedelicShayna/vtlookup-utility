@@ -1,11 +1,5 @@
 /*
-!*.cxx
-!*.hxx
-
-!*.hpp
-!*.cpp
-
+!source/
 !*.pro
 !.gitignore
-
 !README.md

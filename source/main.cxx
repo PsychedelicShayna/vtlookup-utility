@@ -1,4 +1,4 @@
-#include <vtlookup.hxx>
+#include <source/vtlookup.hxx>
 
 int main(int argc, char* argv[]) {
     bool verbose_output = false;    // Enables the verbose output of the VirusTotal report.

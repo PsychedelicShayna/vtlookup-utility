@@ -30,12 +30,12 @@ LIBS += \
     -lopenssl
 
 SOURCES += \
-    main.cxx \
-    vtlookup.cxx
+    source/main.cxx \
+    source/vtlookup.cxx
 
 HEADERS += \
-    json.hpp \
-    vtlookup.hxx
+    source/json.hpp \
+    source/vtlookup.hxx
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

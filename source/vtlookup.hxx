@@ -12,7 +12,7 @@
 #include <openssl/sha.h>
 
 // Nlohmann JSON
-#include <json.hpp>
+#include <source/json.hpp>
 using Json = nlohmann::json;
 
 // Standard library
