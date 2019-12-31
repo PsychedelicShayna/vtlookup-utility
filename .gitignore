@@ -1,6 +1,11 @@
 /*
 !*.cxx
+!*.hxx
+
 !*.hpp
+!*.cpp
+
 !*.pro
 !.gitignore
+
 !README.md
