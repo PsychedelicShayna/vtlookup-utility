@@ -11,16 +11,8 @@ INCLUDEPATH += \
     C:/Curl/include
 
 # LibCurl + dependencies linkage.
-LIBS += -LC:/Curl/builds/precompiled/static-release-x64
-LIBS += \
-    -llibcurl_a \
-    -lws2_32 \
-    -lwldap32 \
-    -ladvapi32 \
-    -lkernel32 \
-    -lcomdlg32 \
-    -lcrypt32 \
-    -lnormaliz
+LIBS += -LC:/Curl/lib
+LIBS += -llibcurl
 
 # OpenSSL linkage.
 LIBS += -LC:/OpenSSL-Win64/lib/
@@ -28,6 +20,16 @@ LIBS += \
     -llibcrypto \
     -llibssl \
     -lopenssl
+
+# Additional Windows library dependencies.
+LIBS += \
+    -lws2_32 \
+    -lwldap32 \
+    -ladvapi32 \
+    -lkernel32 \
+    -lcomdlg32 \
+    -lcrypt32 \
+    -lnormaliz
 
 SOURCES += \
     source/main.cxx \

@@ -1,177 +1,293 @@
 #include <source/vtlookup.hxx>
+#include <openssl/sha.h>
 
-int main(int argc, char* argv[]) {
-    bool verbose_output = false;    // Enables the verbose output of the VirusTotal report.
-    std::string target_hash;        // The hash of the file who's report will be retrieved.
-    std::string api_key;            // Api key that will be used to retrieve the report.
+#include <conio.h>
 
-    // Loop that handles command line arguments.
+using VTERROR = VirusTotalReport::VTERROR;
+
+/* This function uses OpenSSL to calculate the SHA-256 digest of the provided input data
+ * and returns a hexadecimal string representation of the digest. */
+std::string Sha256Hexdigest(const std::vector<uint8_t>& input_data) {
+    std::array<uint8_t, SHA256_DIGEST_LENGTH> digest_buffer;
+
+    SHA256_CTX openssl_sha256;
+    SHA256_Init(&openssl_sha256);
+    SHA256_Update(&openssl_sha256, input_data.data(), input_data.size());
+    SHA256_Final(digest_buffer.data(), &openssl_sha256);
+
+    std::stringstream hexdigest_conversion_stream;
+    hexdigest_conversion_stream << std::setfill('0') << std::hex;
+
+    for(const auto& byte : digest_buffer) {
+        hexdigest_conversion_stream << std::setw(2) << static_cast<uint32_t>(byte);
+    }
+
+    return hexdigest_conversion_stream.str();
+}
+
+enum struct RESOURCE_TYPE {
+    NO_RESOURCE,
+    HEXDIGEST,
+    FILEPATH
+};
+
+int main(int argc, char** argv) {
+    std::cout << std::endl;
+
+    std::string virustotal_api_key;
+    bool display_detection_flags = false;
+
+    RESOURCE_TYPE resource_type = RESOURCE_TYPE::NO_RESOURCE;
+    std::string target_resource;
+
+
+    /* This loop handles command line arguments, and configures the above variables
+     * using the specified arguments. */
+
     for(int i=0; i<argc; ++i) {
         const char* current_argument = argv[i];
-        const char* next_argument = (i+ 1) < argc ? argv[i+1] : nullptr;
+        const char* next_argument = (i+1) < argc ? argv[i+1] : nullptr;
 
-        if(!_stricmp(current_argument, "--hash") && next_argument != nullptr) {
-            target_hash = std::string(next_argument);
-        } else if(!_stricmp(current_argument, "--file") && next_argument != nullptr) {
-            std::ifstream file_input_stream(next_argument, std::ios::binary);
-            if(file_input_stream.good()) {
-                std::vector<uint8_t> file_data((std::istreambuf_iterator<char>(file_input_stream)), (std::istreambuf_iterator<char>()));
+        // Handle --api-key (-k) argument.
+        if((!_stricmp(current_argument, "--api-key") || !_stricmp(current_argument, "-k")) && next_argument != nullptr) {
+            virustotal_api_key = std::string(next_argument);
+        }
 
-                file_input_stream.close();
-                // target_hash = Sha256Hexdigest(file_data);
-            } else {
-                std::cout << "Stream to input file is bad; verify the name and path to the file. Cannot continue without a hash." << std::endl;
-                return 2;
-            }
-        } else if(!_stricmp(current_argument, "--api-key") && next_argument != nullptr) {
-            api_key = std::string(next_argument);
-        } else if(!_stricmp(current_argument, "--verbose")) {
-            verbose_output = true;
+        // Handle --detection-flags (-v) argument.
+        else if(!_stricmp(current_argument, "--detection-flags") || !_stricmp(current_argument, "-v")) {
+            display_detection_flags = true;
+        }
+
+        // Handle --file (-f) argument.
+        else if((!_stricmp(current_argument, "--file") || !_stricmp(current_argument, "-f")) && next_argument != nullptr) {
+            target_resource = std::string(next_argument);
+            resource_type = RESOURCE_TYPE::FILEPATH;
+        }
+
+        // Handle --hash (-h) argument.
+        else if((!_stricmp(current_argument, "--hash") || !_stricmp(current_argument, "-x")) && next_argument != nullptr) {
+            target_resource = std::string(next_argument);
+            resource_type = RESOURCE_TYPE::HEXDIGEST;
         }
     }
 
-    if(api_key.size() == 0) {
-        std::ifstream file_input_stream("config.json", std::ios::binary);
+    // If no API key was specified, attempt to load the API key from the configuration file.
+    if(virustotal_api_key.empty()) {
+        std::ifstream input_file_stream("config.json", std::ios::binary);
 
-        if(file_input_stream.good()) {
-            std::vector<char> file_data((std::istreambuf_iterator<char>(file_input_stream)), (std::istreambuf_iterator<char>()));
-            std::string file_data_string; file_data_string.resize(file_data.size());
-            std::copy(file_data.begin(), file_data.end(), file_data_string.begin());
+        if(input_file_stream.good()) {
+            std::vector<uint8_t> file_data(
+                (std::istreambuf_iterator<char>(input_file_stream)),
+                (std::istreambuf_iterator<char>())
+            );
 
-            Json configuration = Json::parse(file_data_string);
+            input_file_stream.close();
 
-            for(const auto& kvpair : configuration.items()) {
-                if(kvpair.key() == "api_key") {
-                    api_key = kvpair.value().get<std::string>();
+            Json json_configuration;
+
+            try {
+                json_configuration = Json::parse(file_data);
+            } catch(const nlohmann::detail::exception&) {
+                std::cout << "Encountered a JSON error when attempting to parse the configuration file." << std::endl;
+                std::cout << "Please fix the file, or provide an API key through the command line." << std::endl;
+                return 1;
+            }
+
+            if(json_configuration.find("api_key") != json_configuration.end() && json_configuration.at("api_key").is_string()) {
+                const std::string& config_provided_api_key = json_configuration.at("api_key").get<std::string>();
+
+                if(config_provided_api_key.size() == 64) {
+                    virustotal_api_key = config_provided_api_key;
+                } else {
+                    std::cout << "The length of the API key within the configuration file is invalid. Expected 64, got ";
+                    std::cout << config_provided_api_key.size() << ". Please correct the error." << std::endl;
+                    return 1;
                 }
             }
         } else {
-            std::cout << "Input stream to configuration file is bad. Cannot continue without an API key." << std::endl;
-            std::cout << "Generating a new configuration file.." << std::endl;
+            std::cout << "The input stream to the configuration file is bad. A new one will be generated." << std::endl;
 
-            std::ofstream file_output_stream("config.json", std::ios::binary);
-            if(file_output_stream.good()) {
-                Json configuration_template {{"api_key", ""}};
-                std::string configuration_template_string = configuration_template.dump(4);
+            std::ofstream output_file_stream("config.json", std::ios::binary);
 
-                file_output_stream.write(configuration_template_string.c_str(), configuration_template_string.size());
-                file_output_stream.close();
+            if(output_file_stream.good()) {
+                static Json configuration_file_template {
+                    {"api_key", ""}
+                };
 
-                std::cout << "Configuration file has been generated. Please fill it in and try again." << std::endl;
-                return 1;
+                const std::string& serialized_template = configuration_file_template.dump(4);
+
+                output_file_stream.write(serialized_template.data(), serialized_template.size());
+                output_file_stream.close();
+
+                std::cout << "A new configuration file has been generated, please fill it in and try again." << std::endl;
+                return 0;
             } else {
-                std::cout << "Output stream to configuration file is bad. Cannot generate a new configuration file." << std::endl;
-                return 3;
+                std::cout << "The output stream to the configuration file is bad. Cannot generate a new configuration file." << std::endl;
+                std::cout << "Perhaps this program has been run with insufficient privileges?" << std::endl;
+                return 1;
             }
         }
     }
 
-    if(api_key.size() != 64) {
-        std::cout << "A valid API key has a size of 64. The one supplied has a size of " << api_key.size() << " and is therefore invalid. Cannot continue without an API key." << std::endl;
-        return 4;
+    // If one was specified, but with an invalid length, log the error and exit.
+    else if (virustotal_api_key.size() != 64) {
+        std::cout << "The length of the provided API key is invalid. Expected 64, got " << virustotal_api_key.size() << ". Please correct the error." << std::endl;
+        return 1;
     }
 
-    if(target_hash.size() == 0) {
-        std::cout << "No input hash has been supplied." << std::endl;
-        return 5;
-    }
+    VirusTotalReport virustotal_report(virustotal_api_key);
 
-    VirusTotalReport virus_total_report(api_key);
+    VirusTotalReport::HttpResponse http_response;
+    Json resource_report_json;
 
-    std::string response_body, response_header;
-    long status_code = virus_total_report.LoadReport(target_hash, &response_body, &response_header);
+    switch(resource_type) {
+        case RESOURCE_TYPE::FILEPATH : {
+            std::ifstream input_file_stream(target_resource, std::ios::binary);
+            std::vector<uint8_t> file_data;
 
-    if(status_code != 200) {
-        std::cout << std::endl << "The status code returned when attempting to load the report is not okay (should be 200): " << status_code << std::endl;
-        std::cout << "Negative codes are internal errors, a code 0 is a connection error, and > 0 are HTTP status codes." << std::endl;
+            if(input_file_stream.good()) {
+                file_data = std::vector<uint8_t>(
+                    (std::istreambuf_iterator<char>(input_file_stream)),
+                    (std::istreambuf_iterator<char>())
+                );
 
-        if(status_code > 0) {
-            std::cout << "The response header may yield more information, as the code is an HTTP status code.." << std::endl;
-            std::cout << std::string(50, '=') << std::endl;
-            std::cout << response_header << std::endl;
+                input_file_stream.close();
+            } else {
+                std::cout << "The input stream to the file resource provided is bad. Please ensure the path is correct, and that this program has sufficient privilages to access it." << std::endl;
+                return 1;
+            }
+
+            const std::string& file_hexdigest = Sha256Hexdigest(file_data);
+
+            const std::pair<VTERROR, VTERROR>& error_codes =
+                virustotal_report.DownloadAndLoadReport(file_hexdigest, &resource_report_json, &http_response);
+
+            if(error_codes.first == VTERROR::ERRORLESS && error_codes.second == VTERROR::ERRORLESS) {
+                if(http_response.StatusCode == 200) {
+                    switch(virustotal_report.ResponseCode) {
+                        case 0 : {
+                            std::cout << virustotal_report.ErrorMessage << std::endl;
+                            std::cout << "Would you like to submit the file for analysis Y/N? ";
+
+                            uint32_t pressed_char = _getch();
+                            for(;pressed_char != 'y' && pressed_char != 'n'; pressed_char = _getch());
+
+                            std::cout << std::endl;
+
+                            if(pressed_char == 'y') {
+                                VirusTotalReport::HttpResponse submit_file_http_response;
+                                Json submission_status_json;
+
+                                virustotal_report.SubmitFile(target_resource, &submission_status_json, &submit_file_http_response);
+
+                                if(submit_file_http_response.StatusCode == 200) {
+                                    if(submission_status_json.find("verbose_msg") != submission_status_json.end() && submission_status_json.at("verbose_msg").is_string()) {
+                                        std::cout << submission_status_json.at("verbose_msg").get<std::string>();
+                                        std::cout << std::endl;
+                                        return 0;
+                                    } else {
+                                        std::cout << "No message received from server, this could be indicative of a problem." << std::endl;
+                                        std::cout << "Submission status unknown." << std::endl << std::endl;
+                                        return 1;
+                                    }
+                                } else {
+                                    std::cout << "Bad HTTP status code: " << submit_file_http_response.StatusCode << std::endl;
+                                    std::cout << "Perhaps the header and body may reveal more information." << std::endl << std::endl;
+
+                                    std::cout << std::string(50, '=');
+                                    std::cout << submit_file_http_response.Header << std::endl;
+                                    std::cout << std::string(50, '-');
+                                    std::cout << submit_file_http_response.Body << std::endl;
+                                    std::cout << std::string(50, '-') << std::endl << std::endl;
+                                    return 1;
+                                }
+
+                            } else {
+                                std::cout << "Nothing to do, exiting.." << std::endl << std::endl;
+                                return 1;
+                            }
+
+                            break;
+                        }
+
+                        case 1 : {
+                            virustotal_report.RenderReport(!display_detection_flags);
+                            return 0;
+                            break;
+                        }
+
+                        case -2:  {
+                            std::cout << virustotal_report.ErrorMessage << std::endl;
+                            break;
+                        }
+
+                        default : {
+                            std::cout << "Unknown response code " << virustotal_report.ResponseCode << std::endl;
+                            break;
+                        }
+                    }
+                } else if(http_response.StatusCode == 204) {
+                    std::cout << "VirusTotal API quota has been reached, please wait a moment and try again." << std::endl;
+                    return 1;
+                } else {
+                    std::cout << "Bad HTTP status code: " << http_response.StatusCode << std::endl;
+                    std::cout << "Perhaps the header and body may reveal more information." << std::endl << std::endl;
+
+                    std::cout << std::string(50, '=');
+                    std::cout << http_response.Header << std::endl;
+                    std::cout << std::string(50, '-');
+                    std::cout << http_response.Body << std::endl;
+                    std::cout << std::string(50, '-');
+                    return 1;
+                }
+            } else {
+                std::cout << "Internal error code D" << static_cast<uint32_t>(error_codes.first) << " L" << static_cast<uint32_t>(error_codes.second) << std::endl;
+                return 1;
+            }
+
+            break;
+        }
+
+        case RESOURCE_TYPE::HEXDIGEST : {
+            const std::pair<VTERROR, VTERROR>& error_codes =
+                virustotal_report.DownloadAndLoadReport(target_resource, &resource_report_json, &http_response);
+
+            if(error_codes.first == VTERROR::ERRORLESS && error_codes.second == VTERROR::ERRORLESS) {
+                if(http_response.StatusCode == 200) {
+                    switch(virustotal_report.ResponseCode) {
+                        case 0 : {
+                            std::cout << virustotal_report.ErrorMessage << std::endl;
+                            std::cout << "Please provide the original file if you want to have it analyzed." << std::endl;
+                            return 1;
+                        }
+
+                        case 1 : {
+                            virustotal_report.RenderReport(!display_detection_flags);
+                            return 0;
+                        }
+                    }
+                } else if(http_response.StatusCode == 204) {
+                    std::cout << "VirusTotal API quota has been reached, please wait a moment and try again." << std::endl;
+                    return 1;
+                } else {
+                    std::cout << "Bad HTTP status code: " << http_response.StatusCode << std::endl;
+                    std::cout << "Perhaps the header and body may reveal more information." << std::endl << std::endl;
+
+                    std::cout << std::string(50, '=');
+                    std::cout << http_response.Header << std::endl;
+                    std::cout << std::string(50, '-');
+                    std::cout << http_response.Body << std::endl;
+                    std::cout << std::string(50, '-');
+                    return 1;
+                }
+            }
+
+            break;
+        }
+
+        case RESOURCE_TYPE::NO_RESOURCE : {
+            std::cout << "You have not provided a resource. You may provide a file through the --file(-f) argument, or a hash through the --hash(-x) argument." << std::endl;
             return 1;
         }
-
     }
-
-    HANDLE console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    uint16_t original_text_attributes;
-
-    CONSOLE_SCREEN_BUFFER_INFO console_screen_buffer_info;
-    GetConsoleScreenBufferInfo(console_handle, &console_screen_buffer_info);
-    original_text_attributes = console_screen_buffer_info.wAttributes;
-
-    if(virus_total_report.ResponseCode == 1) {
-        std::cout << std::endl;
-        SetConsoleTextAttribute(console_handle, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-        std::cout << std::string(virus_total_report.ReportLink.size(), '=') << std::endl;
-        std::cout << virus_total_report.ReportLink << std::endl;
-        std::cout << std::string(virus_total_report.ReportLink.size(), '=') << std::endl;
-        std::cout << " -> ";
-
-        SetConsoleTextAttribute(console_handle, FOREGROUND_RED | FOREGROUND_INTENSITY);
-        std::cout << virus_total_report.Positives;
-
-        SetConsoleTextAttribute(console_handle, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-        std::cout << " / ";
-
-        SetConsoleTextAttribute(console_handle, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-        std::cout << virus_total_report.ScanCount;
-        std::cout << " [" <<  virus_total_report.DetectionRatio << " %]";
-        std::cout << " @ " ;
-        std::cout << virus_total_report.ScanDate;
-        std::cout << " | ";
-
-        SetConsoleTextAttribute(console_handle, FOREGROUND_RED | FOREGROUND_INTENSITY);
-        std::cout << virus_total_report.Positives << " positives";
-
-        SetConsoleTextAttribute(console_handle, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-        std::cout << " & ";
-        std::cout << virus_total_report.Negatives << " negatives";
-        std::cout << " out of ";
-
-        SetConsoleTextAttribute(console_handle, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-        std::cout << virus_total_report.ScanCount;
-
-        SetConsoleTextAttribute(console_handle, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-        std::cout << " distinct antivirus engine scans.." << std::endl;
-        std::cout << std::string(virus_total_report.ReportLink.size(), '=') << std::endl;
-
-        SetConsoleTextAttribute(console_handle, original_text_attributes);
-
-        const std::vector<VirusTotalReport::EngineScan>& engine_scans = virus_total_report.EngineScans;
-
-        for(std::size_t i=0; i<engine_scans.size(); ++i) {
-            const VirusTotalReport::EngineScan& engine_scan = engine_scans.at(i);
-            std::stringstream engine_report_stream;
-            engine_report_stream << engine_scan.EngineName << "(" << engine_scan.EngineVersion << ")";
-            engine_report_stream << std::string(50 - engine_report_stream.str().size(), '.');
-            std::cout << engine_report_stream.str();
-
-            std::string result = (verbose_output ? (engine_scan.Description) : (engine_scan.Detected ? "DIRTY" : "CLEAN"));
-
-            if(result != "CLEAN") {
-                SetConsoleTextAttribute(console_handle, FOREGROUND_RED | BACKGROUND_RED | BACKGROUND_BLUE | FOREGROUND_INTENSITY);
-            } else {
-                SetConsoleTextAttribute(console_handle, FOREGROUND_BLUE | BACKGROUND_BLUE | BACKGROUND_RED | FOREGROUND_INTENSITY);
-            }
-
-            std::cout << result;
-
-            SetConsoleTextAttribute(console_handle, original_text_attributes);
-
-            if(verbose_output) {
-                std::cout << std::endl;
-            } else {
-                std::cout << ((i % 2) ? "\n" : " | ");
-            }
-        }
-
-        std::cout << std::endl << std::string(virus_total_report.ReportLink.size(), '=') << std::endl << std::endl;
-    } else {
-        std::cout << "The response code is bad. Perhaps an error occured, or the file wasn't submitted yet." << std::endl;
-        std::cout << "Response code: " << virus_total_report.ResponseCode << " | Message: " << (virus_total_report.ErrorMessage.empty() ? "None supplied." : virus_total_report.ErrorMessage) << std::endl;
-    }
-
-    return 0;
 }

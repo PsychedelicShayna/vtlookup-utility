@@ -2,38 +2,12 @@
 
 using VTERROR = VirusTotalReport::VTERROR;
 
-enum struct VirusTotalReport::VTERROR {
-    ERRORLESS,
-    PARSING_ERROR,
-    CONNECTION_ERROR,
-    INVALID_CURL_HANDLE,
-    UNASSIGNED
-};
-
-std::string VirusTotalReport::sha256Hexdigest(const std::vector<uint8_t>& input_data) {
-    std::array<uint8_t, SHA256_DIGEST_LENGTH> digest_buffer;
-
-    SHA256_CTX openssl_sha256;
-    SHA256_Init(&openssl_sha256);
-    SHA256_Update(&openssl_sha256, input_data.data(), input_data.size());
-    SHA256_Final(digest_buffer.data(), &openssl_sha256);
-
-    std::stringstream hexdigest_conversion_stream;
-    hexdigest_conversion_stream << std::setfill('0') << std::hex;
-
-    for(const auto& byte : digest_buffer) {
-        hexdigest_conversion_stream << std::setw(2) << static_cast<uint32_t>(byte);
-    }
-
-    return hexdigest_conversion_stream.str();
-}
-
-std::size_t VirusTotalReport::getRequestWriter(void* data, std::size_t fake_size, std::size_t size, std::string* out_string) {
+std::size_t VirusTotalReport::curlWriter(void *data, std::size_t fake_size, std::size_t size, std::string *out_string) {
     out_string->append(reinterpret_cast<char*>(data), fake_size * size);
     return fake_size * size;
 }
 
-VTERROR VirusTotalReport::getRequest(const std::string& url, HttpResponse* out_response, bool verbose_curl) {
+VTERROR VirusTotalReport::getRequest(const std::string& url, HttpResponse* out_response) {
     CURL* curl_session = curl_easy_init();
 
     if(curl_session) {
@@ -44,13 +18,14 @@ VTERROR VirusTotalReport::getRequest(const std::string& url, HttpResponse* out_r
         curl_easy_setopt(curl_session, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl_session, CURLOPT_USERAGENT, "curl");
         curl_easy_setopt(curl_session, CURLOPT_HTTPGET, 1L);
-        curl_easy_setopt(curl_session, CURLOPT_WRITEFUNCTION, &getRequestWriter);
+        curl_easy_setopt(curl_session, CURLOPT_WRITEFUNCTION, &curlWriter);
         curl_easy_setopt(curl_session, CURLOPT_WRITEDATA, &http_response.Body);
         curl_easy_setopt(curl_session, CURLOPT_HEADERDATA, &http_response.Header);
         curl_easy_setopt(curl_session, CURLOPT_TCP_KEEPALIVE, 2UL);
 
-        // Enable verbose curl output if told to do so by the verbose_curl argument.
-        if(verbose_curl) curl_easy_setopt(curl_session, CURLOPT_VERBOSE, 1L);
+        #ifdef DEBUG
+        curl_easy_setopt(curl_session, CURLOPT_VERBOSE, 1L);
+        #endif
 
         // Perform the HTTP/GET request configured in the current curl session handle.
         curl_easy_perform(curl_session);
@@ -72,7 +47,6 @@ VTERROR VirusTotalReport::getRequest(const std::string& url, HttpResponse* out_r
         return VTERROR::INVALID_CURL_HANDLE;
     }
 }
-
 
 VTERROR VirusTotalReport::DownloadReport(const std::string& resource, HttpResponse* out_response) {
     // Use a stringstream to construct the API request URL.
@@ -126,7 +100,7 @@ VTERROR VirusTotalReport::LoadReport(const Json& json_report) {
         {"md5", &(this->FileMd5Hexdigest)},
     };
 
-    std::map<std::string, uint32_t*> integer_value_map {
+    std::map<std::string, int32_t*> integer_value_map {
         {"response_code", &(this->ResponseCode)},
         {"positives", &(this->Positives)},
         {"total", &(this->ScanCount)},
@@ -143,7 +117,7 @@ VTERROR VirusTotalReport::LoadReport(const Json& json_report) {
 
         // Performs the same as the above, except using the integer value map for integer pointers.
         else if(kvpair.value().is_number_integer() && integer_value_map.find(kvpair.key()) != integer_value_map.end()) {
-            *integer_value_map.at(kvpair.key()) = kvpair.value().get<uint32_t>();
+            *integer_value_map.at(kvpair.key()) = kvpair.value().get<int32_t>();
         }
 
         // Parses the "scans" structure in the report, and constructs a new EngineScan object for
@@ -232,6 +206,68 @@ std::pair<VTERROR, VTERROR> VirusTotalReport::DownloadAndLoadReport(const std::s
     }
 }
 
+VTERROR VirusTotalReport::SubmitFile(const std::string& file_path, HttpResponse* out_response) {
+    std::stringstream request_url_stream;
+    request_url_stream << "https://www.virustotal.com/vtapi/v2/file/scan";
+    request_url_stream << "?apikey=" << ApiKey;
+
+    const std::string request_url = request_url_stream.str();
+    request_url_stream.clear();
+
+    CURL* curl_session = curl_easy_init();
+
+    if(curl_session) {
+        HttpResponse http_response;
+
+        #ifdef DEBUG
+        curl_easy_setopt(curl_session, CURLOPT_VERBOSE, 1L);
+        #endif
+
+        curl_easy_setopt(curl_session, CURLOPT_URL, request_url.c_str());
+        curl_easy_setopt(curl_session, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl_session, CURLOPT_WRITEDATA, &http_response.Body);
+        curl_easy_setopt(curl_session, CURLOPT_WRITEFUNCTION, &curlWriter);
+        curl_easy_setopt(curl_session, CURLOPT_HEADERDATA, &http_response.Header);
+
+        struct curl_httppost* form_data = nullptr;
+        struct curl_httppost* last_form_data = nullptr;
+
+        curl_formadd(&form_data, &last_form_data, CURLFORM_COPYNAME, "file", CURLFORM_FILE, file_path.c_str(), CURLFORM_END);
+        curl_easy_setopt(curl_session, CURLOPT_HTTPPOST, form_data);
+
+        curl_easy_perform(curl_session);
+
+        curl_easy_getinfo(curl_session, CURLINFO_HTTP_CODE, &http_response.StatusCode);
+        if(out_response != nullptr) *out_response = http_response;
+
+        curl_easy_cleanup(curl_session);
+
+        return VTERROR::ERRORLESS;
+    } else {
+        return VTERROR::INVALID_CURL_HANDLE;
+    }
+}
+
+VTERROR VirusTotalReport::SubmitFile(const std::string& file_path, Json* out_json, HttpResponse* out_response) {
+    HttpResponse http_response;
+    Json response_body_json;
+
+    VTERROR error_code = SubmitFile(file_path, &http_response);
+
+    if(error_code == VTERROR::ERRORLESS) {
+        try {
+            response_body_json = Json::parse(http_response.Body);
+        } catch(const nlohmann::detail::exception&) {
+            return VTERROR::PARSING_ERROR;
+        }
+
+        if(out_response != nullptr) *out_response = http_response;
+        if(out_json != nullptr) *out_json = response_body_json;
+    }
+
+    return error_code;
+}
+
 void VirusTotalReport::ResetReportData() {
     EngineScans.clear();
 
@@ -250,7 +286,72 @@ void VirusTotalReport::ResetReportData() {
     ScanId.clear();
 }
 
+void VirusTotalReport::RenderReport(bool as_table) const {
+    // Helper lambda that simplifies changing the text color of certain report elements.
+    static const std::function<void(uint16_t)>& set_color = [](uint16_t color = NULL) {
+        static HANDLE console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        static uint16_t original_color = NULL;
+
+        if(!original_color) {
+            CONSOLE_SCREEN_BUFFER_INFO console_screen_buffer_info;
+            GetConsoleScreenBufferInfo(console_handle, &console_screen_buffer_info);
+            original_color = console_screen_buffer_info.wAttributes;
+        }
+
+        SetConsoleTextAttribute(console_handle, color == NULL ? original_color : color);
+    };
+
+    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+    std::cout << "REPORT FOUND ~> ";
+
+    set_color(FOREGROUND_RED | FOREGROUND_INTENSITY);
+    std::cout << Positives;
+
+    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+    std::cout << " / ";
+
+    set_color(FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+    std::cout << ScanCount;
+
+    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+    std::cout << " [ " << DetectionRatio << "%] @ " << ScanDate << " | ";
+
+    set_color(FOREGROUND_RED | FOREGROUND_INTENSITY);
+    std::cout << Positives << " positives";
+
+    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+    std::cout << " & " << Negatives << " negatives, out of ";
+
+    set_color(FOREGROUND_GREEN | FOREGROUND_RED | FOREGROUND_INTENSITY);
+    std::cout << ScanCount << " distinct AV engine scans.." << std::endl;
+
+    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+    std::cout << std::string(113, '-') << std::endl;
+
+    for(std::size_t i=0; i<EngineScans.size(); ++i) {
+        const EngineScan& engine_scan = EngineScans.at(i);
+        const std::string& engine_name_string = engine_scan.EngineName + "(" + engine_scan.EngineVersion + ")";
+
+        std::cout << engine_scan.EngineName << "(" << engine_scan.EngineVersion << ")";
+        std::cout << std::string(50 - engine_name_string.size(), '.');
+
+        std::string engine_result = (as_table ? (engine_scan.Detected ? "DIRTY" : "CLEAN") : (engine_scan.Description));
+        set_color((engine_result != "CLEAN" ? FOREGROUND_RED : FOREGROUND_BLUE) | FOREGROUND_INTENSITY);
+        std::cout << engine_result;
+
+        set_color(NULL);
+
+        std::cout << (as_table && !(i % 2) ? " | " : "\n");
+    }
+
+    std::cout << std::endl << std::string(113, '-') << std::endl << std::endl;
+}
+
 VirusTotalReport::VirusTotalReport(const std::string& api_key) {
     ApiKey = api_key;
+    ResetReportData();
+}
+
+VirusTotalReport::~VirusTotalReport() {
     ResetReportData();
 }
