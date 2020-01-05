@@ -1,8 +1,6 @@
 #include <source/vtlookup.hxx>
 #include <openssl/sha.h>
 
-#include <conio.h>
-
 using HttpResponse = VirusTotalReport::HttpResponse;
 using VTERROR = VirusTotalReport::VTERROR;
 
