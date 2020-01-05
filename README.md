@@ -1,6 +1,15 @@
 # VirusTotal Lookup Utility
 This is a command line utility designed to submit files and retrieve reports from [VirusTotal](https://www.virustotal.com)'s WebAPI.
 
+*Normal mode*
+![](screenshots/demo1.png?raw=true)
+
+*Verbose mode*
+![](screenshots/demo2.png?raw=true)
+
+*Verbose mode - clean results*
+![](screenshots/demo3.png?raw=true)
+
 ## Usage
 The utility relies on a VirusTotal API key to function. You must create a VirusTotal account in order to receive an API key.
 The API key can be fed to the utility in one of two ways: either as a command line argument, or through a `config.json` file which is automatically generated if no API key is supplied as a command line argument.
