@@ -39,6 +39,14 @@ HEADERS += \
     source/json.hpp \
     source/vtlookup.hxx
 
+win32 {
+    DEFINES += WINDOWS
+}
+
+unix {
+    DEFINES += UNIX
+}
+
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin

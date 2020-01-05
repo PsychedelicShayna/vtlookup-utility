@@ -1,6 +1,12 @@
 #include <source/vtlookup.hxx>
 #include <openssl/sha.h>
 
+#if defined (WINDOWS) && !defined (UNIX)
+#define CONFIG_FILE_PATH "C:/.vtlookup-config.json"
+#else
+#define CONFIG_FILE_PATH "~/.vtlookup-config.json"
+#endif
+
 using HttpResponse = VirusTotalReport::HttpResponse;
 using VTERROR = VirusTotalReport::VTERROR;
 
@@ -71,7 +77,7 @@ int main(int argc, char** argv) {
 
     // If no API key was specified, attempt to load the API key from the configuration file.
     if(virustotal_api_key.empty()) {
-        std::ifstream input_file_stream("config.json", std::ios::binary);
+        std::ifstream input_file_stream(CONFIG_FILE_PATH, std::ios::binary);
 
         if(input_file_stream.good()) {
             std::vector<uint8_t> file_data(
@@ -105,7 +111,7 @@ int main(int argc, char** argv) {
         } else {
             std::cout << "The input stream to the configuration file is bad. A new one will be generated." << std::endl;
 
-            std::ofstream output_file_stream("config.json", std::ios::binary);
+            std::ofstream output_file_stream(CONFIG_FILE_PATH, std::ios::binary);
 
             if(output_file_stream.good()) {
                 static Json configuration_file_template {
