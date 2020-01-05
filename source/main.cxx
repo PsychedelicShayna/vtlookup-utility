@@ -3,6 +3,7 @@
 
 #include <conio.h>
 
+using HttpResponse = VirusTotalReport::HttpResponse;
 using VTERROR = VirusTotalReport::VTERROR;
 
 /* This function uses OpenSSL to calculate the SHA-256 digest of the provided input data
@@ -35,11 +36,10 @@ int main(int argc, char** argv) {
     std::cout << std::endl;
 
     std::string virustotal_api_key;
-    bool display_detection_flags = false;
+    bool verbose_report = false;
 
     RESOURCE_TYPE resource_type = RESOURCE_TYPE::NO_RESOURCE;
     std::string target_resource;
-
 
     /* This loop handles command line arguments, and configures the above variables
      * using the specified arguments. */
@@ -53,9 +53,9 @@ int main(int argc, char** argv) {
             virustotal_api_key = std::string(next_argument);
         }
 
-        // Handle --detection-flags (-v) argument.
-        else if(!_stricmp(current_argument, "--detection-flags") || !_stricmp(current_argument, "-v")) {
-            display_detection_flags = true;
+        // Handle --verbose (-v) argument.
+        else if(!_stricmp(current_argument, "--verbose") || !_stricmp(current_argument, "-v")) {
+            verbose_report = true;
         }
 
         // Handle --file (-f) argument.
@@ -137,8 +137,7 @@ int main(int argc, char** argv) {
 
     VirusTotalReport virustotal_report(virustotal_api_key);
 
-    VirusTotalReport::HttpResponse http_response;
-    Json resource_report_json;
+    std::string resource_hexdigest;
 
     switch(resource_type) {
         case RESOURCE_TYPE::FILEPATH : {
@@ -152,96 +151,10 @@ int main(int argc, char** argv) {
                 );
 
                 input_file_stream.close();
+
+                resource_hexdigest = Sha256Hexdigest(file_data);
             } else {
                 std::cout << "The input stream to the file resource provided is bad. Please ensure the path is correct, and that this program has sufficient privilages to access it." << std::endl;
-                return 1;
-            }
-
-            const std::string& file_hexdigest = Sha256Hexdigest(file_data);
-
-            const std::pair<VTERROR, VTERROR>& error_codes =
-                virustotal_report.DownloadAndLoadReport(file_hexdigest, &resource_report_json, &http_response);
-
-            if(error_codes.first == VTERROR::ERRORLESS && error_codes.second == VTERROR::ERRORLESS) {
-                if(http_response.StatusCode == 200) {
-                    switch(virustotal_report.ResponseCode) {
-                        case 0 : {
-                            std::cout << virustotal_report.ErrorMessage << std::endl;
-                            std::cout << "Would you like to submit the file for analysis Y/N? ";
-
-                            uint32_t pressed_char = _getch();
-                            for(;pressed_char != 'y' && pressed_char != 'n'; pressed_char = _getch());
-
-                            std::cout << std::endl;
-
-                            if(pressed_char == 'y') {
-                                VirusTotalReport::HttpResponse submit_file_http_response;
-                                Json submission_status_json;
-
-                                virustotal_report.SubmitFile(target_resource, &submission_status_json, &submit_file_http_response);
-
-                                if(submit_file_http_response.StatusCode == 200) {
-                                    if(submission_status_json.find("verbose_msg") != submission_status_json.end() && submission_status_json.at("verbose_msg").is_string()) {
-                                        std::cout << submission_status_json.at("verbose_msg").get<std::string>();
-                                        std::cout << std::endl;
-                                        return 0;
-                                    } else {
-                                        std::cout << "No message received from server, this could be indicative of a problem." << std::endl;
-                                        std::cout << "Submission status unknown." << std::endl << std::endl;
-                                        return 1;
-                                    }
-                                } else {
-                                    std::cout << "Bad HTTP status code: " << submit_file_http_response.StatusCode << std::endl;
-                                    std::cout << "Perhaps the header and body may reveal more information." << std::endl << std::endl;
-
-                                    std::cout << std::string(50, '=');
-                                    std::cout << submit_file_http_response.Header << std::endl;
-                                    std::cout << std::string(50, '-');
-                                    std::cout << submit_file_http_response.Body << std::endl;
-                                    std::cout << std::string(50, '-') << std::endl << std::endl;
-                                    return 1;
-                                }
-
-                            } else {
-                                std::cout << "Nothing to do, exiting.." << std::endl << std::endl;
-                                return 1;
-                            }
-
-                            break;
-                        }
-
-                        case 1 : {
-                            virustotal_report.RenderReport(!display_detection_flags);
-                            return 0;
-                            break;
-                        }
-
-                        case -2:  {
-                            std::cout << virustotal_report.ErrorMessage << std::endl;
-                            break;
-                        }
-
-                        default : {
-                            std::cout << "Unknown response code " << virustotal_report.ResponseCode << std::endl;
-                            break;
-                        }
-                    }
-                } else if(http_response.StatusCode == 204) {
-                    std::cout << "VirusTotal API quota has been reached, please wait a moment and try again." << std::endl;
-                    return 1;
-                } else {
-                    std::cout << "Bad HTTP status code: " << http_response.StatusCode << std::endl;
-                    std::cout << "Perhaps the header and body may reveal more information." << std::endl << std::endl;
-
-                    std::cout << std::string(50, '=');
-                    std::cout << http_response.Header << std::endl;
-                    std::cout << std::string(50, '-');
-                    std::cout << http_response.Body << std::endl;
-                    std::cout << std::string(50, '-');
-                    return 1;
-                }
-            } else {
-                std::cout << "Internal error code D" << static_cast<uint32_t>(error_codes.first) << " L" << static_cast<uint32_t>(error_codes.second) << std::endl;
                 return 1;
             }
 
@@ -249,35 +162,163 @@ int main(int argc, char** argv) {
         }
 
         case RESOURCE_TYPE::HEXDIGEST : {
-            const std::pair<VTERROR, VTERROR>& error_codes =
-                virustotal_report.DownloadAndLoadReport(target_resource, &resource_report_json, &http_response);
+            resource_hexdigest = target_resource;
+            break;
+        }
 
-            if(error_codes.first == VTERROR::ERRORLESS && error_codes.second == VTERROR::ERRORLESS) {
-                if(http_response.StatusCode == 200) {
-                    switch(virustotal_report.ResponseCode) {
-                        case 0 : {
-                            std::cout << virustotal_report.ErrorMessage << std::endl;
-                            std::cout << "Please provide the original file if you want to have it analyzed." << std::endl;
-                            return 1;
-                        }
+        default : {
+            std::cout << "Internal error: unknown resource type " << static_cast<uint32_t>(resource_type) << std::endl;
+            return 1;
+        }
+    }
 
-                        case 1 : {
-                            virustotal_report.RenderReport(!display_detection_flags);
+    HttpResponse http_response;
+    VTERROR dl_error_code = virustotal_report.DownloadReport(resource_hexdigest, &http_response);
+
+
+    // Handle the error code returned by DownloadReport.
+    switch(dl_error_code) {
+        case VTERROR::ERRORLESS : {
+            break;
+        }
+
+        case VTERROR::CONNECTION_ERROR : {
+            std::cout << "Cannot connect to the VirusTotal API endpoint." << std::endl;
+            return 1;
+        }
+
+        case VTERROR::INVALID_CURL_HANDLE : {
+            std::cout << "The CURL handle created while downloading the report was invalid, cannot continue." << std::endl;
+            return 1;
+        }
+
+        default : {
+            std::cout << "Unhandled error code returned while downloading the report: " << static_cast<uint32_t>(dl_error_code) << std::endl;
+            return 1;
+        }
+    }
+
+    VTERROR ld_error_code = virustotal_report.LoadReport(http_response.Body);
+    bool parsed = ld_error_code == VTERROR::PARSING_ERROR ? false : true;
+
+    switch(http_response.StatusCode) {
+        case 200 : {
+            if(!parsed) {
+                std::cout << "The server replied with invalid JSON, cannot parse." << std::endl;
+                std::cout << std::string(50, '=') << std::endl;
+                std::cout << http_response.Header << std::endl;
+                std::cout << std::string(50, '-') << std::endl;
+                std::cout << http_response.Body << std::endl;
+                return 1;
+            }
+
+            switch(virustotal_report.ResponseCode) {
+                case -2 : {
+                    std::cout << "The resource is still pending an analysis, retry later." << std::endl;
+                    return 1;
+                }
+
+                case 0 : {
+                    std::cout << "The provided resource is not present in the database." << std::endl;
+
+                    if(resource_type == RESOURCE_TYPE::FILEPATH) {
+                        std::cout << "Would you like to submit it for an analysis (yes/no) ?~ ";
+                        std::string input_string; std::getline(std::cin, input_string);
+
+                        // Ensure the input string is lowercased.
+                        for(char& character : input_string)
+                            character = (character >= 'A' && character <= 'Z') ? character += 32 : character;
+
+                        if(input_string == "yes" || input_string == "y") {
+                            HttpResponse submit_http_response;
+                            VTERROR sub_error_code = virustotal_report.SubmitFile(target_resource, &submit_http_response);
+
+                            // Handle the only error code that can come from SubmitFile by returning.
+                            if(sub_error_code == VTERROR::INVALID_CURL_HANDLE) {
+                                std::cout << "The CURL handle created while submitting the resource was invalid, cannot continue." << std::endl;
+                                return 1;
+                            }
+
+                            switch(submit_http_response.StatusCode) {
+                                case 200 : {
+                                    Json sub_body_json;
+
+                                    try {
+                                        sub_body_json = Json::parse(submit_http_response.Body);
+                                    } catch(nlohmann::detail::exception&) {
+                                        std::cout << "Failed to JSON parse the response body returned by the server." << std::endl;
+                                        return 1;
+                                    }
+
+                                    int32_t response_code = 0x7FFFFFFF;
+                                    std::string verbose_msg;
+
+                                    if(sub_body_json.find("response_code") != sub_body_json.end() && sub_body_json.at("response_code").is_number_integer()) {
+                                        response_code = sub_body_json.at("response_code").get<int32_t>();
+                                    }
+
+                                    if(sub_body_json.find("verbose_msg") != sub_body_json.end() && sub_body_json.at("verbose_msg").is_string()) {
+                                        verbose_msg = sub_body_json.at("verbose_msg").get<std::string>();
+                                    }
+
+                                    switch(response_code) {
+                                        case 1 : {
+                                            std::cout << "The resource has been submitted for analysis. Check again later for the results." << std::endl;
+                                            return 0;
+                                        }
+
+                                        case 0x7FFFFFFF : {
+                                            std::cout << "No response code was found in the parsed Json body returned by the server." << std::endl;
+                                            std::cout << "Cannot determine the status of the request, exiting.." << std::endl;
+                                            return 1;
+                                        }
+
+                                        default : {
+                                            std::cout << "Unhandled response code: " << response_code << std::endl;
+                                            std::cout << "Server message: " << (verbose_msg.empty() ? "None supplied." : verbose_msg) << std::endl;
+                                            return 1;
+                                        }
+                                    }
+                                }
+
+                                case 204 : {
+                                    std::cout << "VirusTotal API quota reached, please try again later." << std::endl;
+                                    return 1;
+                                }
+
+                                case -1 : {
+                                    std::cout << "HTTP status code is -1, an internal error probably occured." << std::endl;
+
+                                    std::cout << "No status code could be retrieved from the response. Either the response was bad, or the server didn't respond at all" << std::endl;
+                                    std::cout << "but the error wasn't properly handled." << std::endl;
+                                    return 1;
+                                }
+
+                                default : {
+                                    std::cout << "Unhandled HTTP response code received: " << http_response.StatusCode << std::endl;
+                                    return 1;;
+                                }
+                            }
+                        } else {
                             return 0;
                         }
+                    } else {
+                        return 0;
                     }
-                } else if(http_response.StatusCode == 204) {
-                    std::cout << "VirusTotal API quota has been reached, please wait a moment and try again." << std::endl;
-                    return 1;
-                } else {
-                    std::cout << "Bad HTTP status code: " << http_response.StatusCode << std::endl;
-                    std::cout << "Perhaps the header and body may reveal more information." << std::endl << std::endl;
+                }
 
-                    std::cout << std::string(50, '=');
+                case 1 : {
+                    virustotal_report.RenderReport(verbose_report);
+                    return 0;
+                }
+
+                case 0x7FFFFFFF : {
+                    std::cout << "The VirusTotal API endpoint did not respond with a response code, but responded with HTTP:200/OK." << std::endl;
+                    std::cout << "Cannot continue without a response code." << std::endl;
+                    std::cout << std::string(50, '=') << std::endl;
                     std::cout << http_response.Header << std::endl;
-                    std::cout << std::string(50, '-');
+                    std::cout << std::string(50, '-') << std::endl;
                     std::cout << http_response.Body << std::endl;
-                    std::cout << std::string(50, '-');
                     return 1;
                 }
             }
@@ -285,8 +326,21 @@ int main(int argc, char** argv) {
             break;
         }
 
-        case RESOURCE_TYPE::NO_RESOURCE : {
-            std::cout << "You have not provided a resource. You may provide a file through the --file(-f) argument, or a hash through the --hash(-x) argument." << std::endl;
+        case 204 : {
+            std::cout << "VirusTotal API quota reached, please try again later." << std::endl;
+            return 1;
+        };
+
+        case -1 : {
+            std::cout << "HTTP status code is -1, an internal error probably occured." << std::endl;
+
+            std::cout << "No status code could be retrieved from the response. Either the response was bad, or the server didn't respond at all" << std::endl;
+            std::cout << "but the error wasn't properly handled." << std::endl;
+            return 1;
+        }
+
+        default : {
+            std::cout << "Unhandled HTTP response code received: " << http_response.StatusCode << std::endl;
             return 1;
         }
     }

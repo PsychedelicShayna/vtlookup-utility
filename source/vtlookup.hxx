@@ -43,6 +43,8 @@ public:
         std::string Body;
         std::string Header;
         long StatusCode;
+
+        HttpResponse() : StatusCode(-1) {}
     };
 
 protected:
@@ -131,7 +133,7 @@ public:
      * the old data when loading a new report. */
     void ResetReportData();
 
-    void RenderReport(bool as_table = false) const;
+    void RenderReport(bool verbose = false) const;
 
     VirusTotalReport(const std::string& api_key);
     virtual ~VirusTotalReport();

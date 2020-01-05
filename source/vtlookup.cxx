@@ -68,15 +68,15 @@ VTERROR VirusTotalReport::DownloadReport(const std::string& resource, Json* out_
 
     VTERROR error_code = DownloadReport(resource, &http_response);
 
+    if(out_json != nullptr) *out_json = json_parsed_body;
+    if(out_response != nullptr) *out_response = http_response;
+
     if(error_code == VTERROR::ERRORLESS) {
         try {
             json_parsed_body = Json::parse(http_response.Body);
         } catch(const nlohmann::detail::exception&) {
             return VTERROR::PARSING_ERROR;
         }
-
-        if(out_json != nullptr) *out_json = json_parsed_body;
-        if(out_response != nullptr) *out_response = http_response;
     }
 
     return error_code;
@@ -271,10 +271,10 @@ VTERROR VirusTotalReport::SubmitFile(const std::string& file_path, Json* out_jso
 void VirusTotalReport::ResetReportData() {
     EngineScans.clear();
 
-    ResponseCode    =   0xFFFFFFFF;
-    Positives       =   0xFFFFFFFF;
-    Negatives       =   0xFFFFFFFF;
-    ScanCount       =   0xFFFFFFFF;
+    ResponseCode    =   0x7FFFFFFF;
+    Positives       =   0x7FFFFFFF;
+    Negatives       =   0x7FFFFFFF;
+    ScanCount       =   0x7FFFFFFF;
     DetectionRatio  =   -1;
 
     FileSha256Hexdigest.clear();
@@ -286,13 +286,13 @@ void VirusTotalReport::ResetReportData() {
     ScanId.clear();
 }
 
-void VirusTotalReport::RenderReport(bool as_table) const {
+void VirusTotalReport::RenderReport(bool verbose) const {
     // Helper lambda that simplifies changing the text color of certain report elements.
     static const std::function<void(uint16_t)>& set_color = [](uint16_t color = NULL) {
         static HANDLE console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
         static uint16_t original_color = NULL;
 
-        if(!original_color) {
+        if(original_color == NULL) {
             CONSOLE_SCREEN_BUFFER_INFO console_screen_buffer_info;
             GetConsoleScreenBufferInfo(console_handle, &console_screen_buffer_info);
             original_color = console_screen_buffer_info.wAttributes;
@@ -301,50 +301,58 @@ void VirusTotalReport::RenderReport(bool as_table) const {
         SetConsoleTextAttribute(console_handle, color == NULL ? original_color : color);
     };
 
-    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-    std::cout << "REPORT FOUND ~> ";
+    if(verbose) {
+        const std::function<std::size_t(const EngineScan& engine_scan)>& get_enginescan_length = [](const EngineScan& engine_scan) -> std::size_t {
+            return engine_scan.EngineName.size() + engine_scan.EngineVersion.size() + 2 + (engine_scan.Detected ? engine_scan.Description.size() : 5);
+        };
 
-    set_color(FOREGROUND_RED | FOREGROUND_INTENSITY);
-    std::cout << Positives;
+        // Finds the EngineScan instance in the EngineScans vector who's description and version is biggest, used as a base padding value.
+        const EngineScan& largest_scan_string = *std::max_element(EngineScans.begin(), EngineScans.end(), [&get_enginescan_length](const EngineScan& scan1, const EngineScan& scan2) -> bool {
+            return get_enginescan_length(scan1) < get_enginescan_length(scan2);
+        });
 
-    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-    std::cout << " / ";
+        const std::size_t& base_padding = get_enginescan_length(largest_scan_string);
 
-    set_color(FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-    std::cout << ScanCount;
+        std::cout << std::string((base_padding * 2) + 23, '-') << std::endl;
 
-    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-    std::cout << " [ " << DetectionRatio << "%] @ " << ScanDate << " | ";
+        for(std::size_t i=0; i<EngineScans.size(); ++i) {
+            const EngineScan& engine_scan = EngineScans.at(i);
 
-    set_color(FOREGROUND_RED | FOREGROUND_INTENSITY);
-    std::cout << Positives << " positives";
+            set_color((engine_scan.Detected ? FOREGROUND_RED : FOREGROUND_GREEN) | FOREGROUND_INTENSITY);
+            std::cout << engine_scan.EngineName << "(" << engine_scan.EngineVersion << ")";
+            std::cout << std::string(base_padding - get_enginescan_length(engine_scan) + 10, '.');
+            std::cout << (engine_scan.Detected ? engine_scan.Description : "CLEAN");
+            set_color(NULL);
 
-    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-    std::cout << " & " << Negatives << " negatives, out of ";
+            std::cout << (!(i % 2) ? ((i+1) < EngineScans.size() ? " | " : " |\n") : "\n");
+        }
 
-    set_color(FOREGROUND_GREEN | FOREGROUND_RED | FOREGROUND_INTENSITY);
-    std::cout << ScanCount << " distinct AV engine scans.." << std::endl;
+        std::cout << std::string((base_padding * 2) + 23, '-') << std::endl;
+    } else {
+        set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::cout << "REPORT FOUND ~> ";
 
-    set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
-    std::cout << std::string(113, '-') << std::endl;
+        set_color(FOREGROUND_RED | FOREGROUND_INTENSITY);
+        std::cout << Positives;
 
-    for(std::size_t i=0; i<EngineScans.size(); ++i) {
-        const EngineScan& engine_scan = EngineScans.at(i);
-        const std::string& engine_name_string = engine_scan.EngineName + "(" + engine_scan.EngineVersion + ")";
+        set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::cout << " / ";
 
-        std::cout << engine_scan.EngineName << "(" << engine_scan.EngineVersion << ")";
-        std::cout << std::string(50 - engine_name_string.size(), '.');
+        set_color(FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::cout << ScanCount;
 
-        std::string engine_result = (as_table ? (engine_scan.Detected ? "DIRTY" : "CLEAN") : (engine_scan.Description));
-        set_color((engine_result != "CLEAN" ? FOREGROUND_RED : FOREGROUND_BLUE) | FOREGROUND_INTENSITY);
-        std::cout << engine_result;
+        set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::cout << " [ " << DetectionRatio << "%] @ " << ScanDate << " | ";
 
-        set_color(NULL);
+        set_color(FOREGROUND_RED | FOREGROUND_INTENSITY);
+        std::cout << Positives << " positives";
 
-        std::cout << (as_table && !(i % 2) ? " | " : "\n");
+        set_color(FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        std::cout << " & " << Negatives << " negatives, out of ";
+
+        set_color(FOREGROUND_GREEN | FOREGROUND_RED | FOREGROUND_INTENSITY);
+        std::cout << ScanCount << " distinct AV engine scans.." << std::endl;
     }
-
-    std::cout << std::endl << std::string(113, '-') << std::endl << std::endl;
 }
 
 VirusTotalReport::VirusTotalReport(const std::string& api_key) {
