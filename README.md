@@ -12,7 +12,7 @@ This is a command line utility designed to submit files and retrieve reports fro
 
 ## Usage
 The utility relies on a VirusTotal API key to function. You must create a VirusTotal account in order to receive an API key.
-The API key can be fed to the utility in one of two ways: either as a command line argument, or through a `config.json` file which is automatically generated if no API key is supplied as a command line argument.
+The API key can be fed to the utility in one of two ways: either as a command line argument, or through a `.vtlookup-config.json` file which is automatically generated if no API key is supplied as a command line argument. The location of the file is defined by the `CONFIG_FILE_PATH` macro. On Windows, this defaults to `C:\.vtlookup-config.json` and on Unix `~/.vtlookup-config.json`. Ensure that you have sufficient privilages when the configuration file is generated for the first time.
 
 The utility can be invoked using the following parameters
 * `--api-key` | `-k` : One of two ways of providing an API key.
