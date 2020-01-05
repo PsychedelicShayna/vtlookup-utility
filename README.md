@@ -12,6 +12,8 @@ The utility can be invoked using the following parameters
 * `--hash` | `-x` : A hash of the target resource, one of two ways of providing a resource.
 
 ## Building
+The code depends on the Windows library in order to color-code the results, however the color change calls can easily be removed without having to modify existing code. In the future I will add a preprocessor directive for Windows/Unix that will use a different color changing function, but for now the dependency can easily be removed if you wish to compile for a non-Windows platform.
+
 QMake is the official build system of this project, and a Qt project file is included. However building it manually isn't much of a problem. This project depends on LibCurl and OpenSSL. The paths to the include directories of both libraries must be passed to your compiler of choice. 
 
 The specific dependencies of LibCurl depends on how it was built. The pre-compiled version for Windows is linked with a version of LibCurl that uses the Windows SSPI library to handle cryptography. Depending on how yours is built, you may depend on OpenSSL, LibSSH, or wolfSSL, etc. I suggest you follow the LibCurl build instructions for your platform rather than using pre-compiled versions, as pre-compiled versions vary too much in the way they are built.
