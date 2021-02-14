@@ -232,6 +232,7 @@ VTERROR VirusTotalReport::SubmitFile(const std::string& file_path, HttpResponse*
         struct curl_httppost* form_data = nullptr;
         struct curl_httppost* last_form_data = nullptr;
 
+
         curl_formadd(&form_data, &last_form_data, CURLFORM_COPYNAME, "file", CURLFORM_FILE, file_path.c_str(), CURLFORM_END);
         curl_easy_setopt(curl_session, CURLOPT_HTTPPOST, form_data);
 
@@ -352,6 +353,8 @@ void VirusTotalReport::RenderReport(bool verbose) const {
 
         set_color(FOREGROUND_GREEN | FOREGROUND_RED | FOREGROUND_INTENSITY);
         std::cout << ScanCount << " distinct AV engine scans.." << std::endl;
+        
+        set_color(NULL);
     }
 }
 

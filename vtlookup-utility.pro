@@ -10,6 +10,12 @@ INCLUDEPATH += \
     C:/OpenSSl-Win64/include \
     C:/Curl/include
 
+win32 {
+    INCLUDEPATH += \
+        C:/OpenSSL-Win64/include \
+        C:/Curl/include
+}
+
 # LibCurl + dependencies linkage.
 LIBS += -LC:/Curl/lib
 LIBS += -llibcurl
@@ -38,14 +44,6 @@ SOURCES += \
 HEADERS += \
     source/json.hpp \
     source/vtlookup.hxx
-
-win32 {
-    DEFINES += WINDOWS
-}
-
-unix {
-    DEFINES += UNIX
-}
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
